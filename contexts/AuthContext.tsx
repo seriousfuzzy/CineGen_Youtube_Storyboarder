@@ -1,0 +1,152 @@
+
+import React, { createContext, useContext, useState, useEffect } from 'react';
+import { User, PlanTier, FREE_INITIAL_TOKENS, STRIPE_PRICING } from '../types';
+
+interface AuthContextType {
+  user: User | null;
+  login: () => Promise<void>;
+  logout: () => void;
+  upgradeToPlan: (tier: 'pro_standard' | 'pro_premium') => void;
+  purchaseTokens: () => void;
+  consumeTokens: (amount: number) => boolean;
+}
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [user, setUser] = useState<User | null>(null);
+
+  // Load user from local storage on mount (Simulation)
+  useEffect(() => {
+    const saved = localStorage.getItem('cinegen_user');
+    if (saved) {
+      setUser(JSON.parse(saved));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (user) {
+      localStorage.setItem('cinegen_user', JSON.stringify(user));
+    } else {
+      localStorage.removeItem('cinegen_user');
+    }
+  }, [user]);
+
+  const login = async () => {
+    // Simulate Google Login
+    // For a new user simulation, we give them the initial free tokens.
+    // In a real app, we would check DB if user exists.
+    const mockUser: User = {
+      uid: 'user_123',
+      displayName: 'テスト ユーザー',
+      email: 'user@example.com',
+      photoURL: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Felix',
+      plan: 'free',
+      tokens: FREE_INITIAL_TOKENS, // One-time grant
+    };
+    setUser(mockUser);
+  };
+
+  const logout = () => {
+    setUser(null);
+  };
+
+  const upgradeToPlan = (tier: 'pro_standard' | 'pro_premium') => {
+    if (!user) return;
+    
+    let grantTokens = 0;
+    let maxCap = Infinity;
+
+    if (tier === 'pro_standard') {
+        grantTokens = STRIPE_PRICING.standard.initialTokens;
+        maxCap = STRIPE_PRICING.standard.maxTokens;
+    }
+    if (tier === 'pro_premium') {
+        grantTokens = STRIPE_PRICING.premium.initialTokens;
+        maxCap = STRIPE_PRICING.premium.maxTokens;
+    }
+
+    // Calculate new total respecting the cap
+    const currentTokens = user.tokens;
+    const potentialTotal = currentTokens + grantTokens;
+    const finalTotal = Math.min(potentialTotal, maxCap);
+    const actualAdded = finalTotal - currentTokens;
+
+    setUser({ ...user, plan: tier, tokens: finalTotal }); 
+    
+    let message = `${tier === 'pro_standard' ? 'スタンダード' : 'プレミアム'}プランにアップグレードしました！`;
+    if (actualAdded < grantTokens) {
+        message += `\n(保有上限 ${maxCap.toLocaleString()}t に達したため、${actualAdded.toLocaleString()}t のみが付与されました)`;
+    } else {
+        message += `\n${grantTokens.toLocaleString()}トークンが付与されました。`;
+    }
+    alert(message);
+  };
+
+  const purchaseTokens = () => {
+    if (!user || user.plan === 'free') return;
+
+    let addedTokens = 0;
+    let cost = 0;
+    let maxCap = Infinity;
+
+    if (user.plan === 'pro_standard') {
+      addedTokens = STRIPE_PRICING.standard.topUp.tokens;
+      cost = STRIPE_PRICING.standard.topUp.price;
+      maxCap = STRIPE_PRICING.standard.maxTokens;
+    } else if (user.plan === 'pro_premium') {
+      addedTokens = STRIPE_PRICING.premium.topUp.tokens;
+      cost = STRIPE_PRICING.premium.topUp.price;
+      maxCap = STRIPE_PRICING.premium.maxTokens;
+    }
+
+    const currentTokens = user.tokens;
+    const potentialTotal = currentTokens + addedTokens;
+    const finalTotal = Math.min(potentialTotal, maxCap);
+    const actualAdded = finalTotal - currentTokens;
+
+    if (actualAdded === 0) {
+        alert(`保有上限 (${maxCap.toLocaleString()}t) に達しているため、これ以上購入できません。`);
+        return;
+    }
+
+    setUser({ ...user, tokens: finalTotal });
+    
+    let message = `${cost}円でトークンを購入しました！`;
+    if (actualAdded < addedTokens) {
+        message += `\n(保有上限により ${actualAdded.toLocaleString()}t がチャージされました)`;
+    } else {
+        message += `\n+${addedTokens.toLocaleString()}t`;
+    }
+    alert(message);
+  };
+
+  const consumeTokens = (amount: number): boolean => {
+    if (!user) return false;
+
+    if (user.tokens >= amount) {
+        setUser({ ...user, tokens: user.tokens - amount });
+        return true;
+    }
+    return false;
+  };
+
+  return (
+    <AuthContext.Provider value={{ 
+      user, 
+      login, 
+      logout, 
+      upgradeToPlan, 
+      purchaseTokens,
+      consumeTokens
+    }}>
+      {children}
+    </AuthContext.Provider>
+  );
+};
+
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (!context) throw new Error('useAuth must be used within an AuthProvider');
+  return context;
+};
